@@ -1,69 +1,28 @@
-# React + TypeScript + Vite
+# NIMDA Web Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+공주대학교 정보보안 동아리 **NIMDA**의 통합 웹 플랫폼 프론트엔드 레포지토리입니다.
 
-Currently, two official plugins are available:
+- **Service**: [nimda.kr](https://nimda.kr)
+- **Backend**: [Nimda-web-backend](https://github.com/Nimda-Security/Nimda-web-backend)
+- **Stack**: React 19, TypeScript, Vite 7, Tailwind CSS 4, React Router 7, Tiptap
+- **Deploy**: Vercel
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## Expanding the ESLint configuration
+## Features
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-//PR 숙제
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- **Community**: 게시판, 댓글, 좋아요, 알림, 첨부파일, 텍스트 에디터
+- **Members**: 로그인, 회원가입, 마이페이지, 유저 프로필
+- **Activity**: 출석, 마일리지, 배지, 프로필 장식, 상점
+- **Contest**: 님다콘 (문제, 제출, 채점 현황, 스코어보드)
+- **Admin**: 관리자 대시보드, 마일리지 관리
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Getting Started
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+**요구 사항**: Node.js 20.19+ 또는 22.12+ (Vite 7 기준)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+```bash
+npm install
+npm run dev
