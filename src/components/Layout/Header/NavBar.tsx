@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Logo from '@/components/icons/Logo';
-import { getCurrentNickname, isAdmin } from '@/utils/jwt';
+import { getCurrentNickname, isAdmin, isDev } from '@/utils/jwt';
 import {
   isLoggedIn,
   logoutAPI,
@@ -13,10 +13,13 @@ import Logout from '@/components/icons/Logout.svg';
 import NotificationBell from '@/components/Notification/NotificationBell';
 import Avatar from '@/components/Avatar/Avatar';
 
+const CTF_SITE_URL = 'https://ctf.nimda.kr';
+
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const [nickname, setNickname] = useState<string | null>(null);
   const [adminStatus, setAdminStatus] = useState(false);
+  const [devStatus, setDevStatus] = useState(false);
   const [isLoggedInState, setIsLoggedInState] = useState(false);
   const [profileImage, setProfileImage] = useState<string | null>(null);
 
@@ -26,6 +29,7 @@ const Navbar: React.FC = () => {
     const loggedIn = isLoggedIn();
     setNickname(currentNickname);
     setAdminStatus(adminCheck);
+    setDevStatus(isDev());
     setIsLoggedInState(loggedIn);
 
     if (loggedIn) {
@@ -34,12 +38,17 @@ const Navbar: React.FC = () => {
         if (!ok) {
           setNickname(null);
           setAdminStatus(false);
+          setDevStatus(false);
           setIsLoggedInState(false);
           return;
         }
         getMyPageInfo().then((result) => {
           if (result.success && result.data) {
             setProfileImage(result.data.profileImage ?? null);
+            // 로그인 뒤에 바뀐 권한도 반영되도록 서버 응답을 우선한다.
+            if (Array.isArray(result.data.roles)) {
+              setDevStatus(result.data.roles.includes('ROLE_DEV'));
+            }
           }
         });
       });
@@ -60,6 +69,7 @@ const Navbar: React.FC = () => {
     logoutAPI();
     setNickname(null);
     setAdminStatus(false);
+    setDevStatus(false);
     setIsLoggedInState(false);
     window.location.href = '/login';
   };
@@ -89,6 +99,28 @@ const Navbar: React.FC = () => {
             <>
               {/* 알림 */}
               <NotificationBell />
+
+              {/* CTF 사이트 바로가기 (ROLE_DEV) */}
+              {devStatus && (
+                <a
+                  href={CTF_SITE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="CTF 사이트 바로가기"
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: '#1a1a1a',
+                    border: '1px solid #d4d4d4',
+                    borderRadius: '6px',
+                    textDecoration: 'none',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  CTF
+                </a>
+              )}
 
               {/* 관리자 설정 아이콘 */}
               {adminStatus && (
