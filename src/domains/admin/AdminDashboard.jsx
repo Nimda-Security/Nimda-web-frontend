@@ -32,6 +32,7 @@ import CategoryManagement from './sections/CategoryManagement';
 import PinPostManagement from './sections/PinPostManagement';
 import TagManagement from './sections/TagManagement';
 import ProfileDecorationManagement from './sections/ProfileDecorationManagement';
+import GroupManagement from './sections/GroupManagement';
 import AdminSidebar from './components/AdminSidebar';
 // import MileagePaymentForm from './components/MileagePaymentForm';
 // import { updatePointManual } from '@/api/point';
@@ -1039,6 +1040,8 @@ function AdminDashboard() {
         );
       case 'profile-decorations':
         return <ProfileDecorationManagement />;
+      case 'groups':
+        return <GroupManagement />;
       default:
         return null;
     }

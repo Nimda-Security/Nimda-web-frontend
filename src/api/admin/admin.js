@@ -326,11 +326,14 @@ export const rejectUserAPI = async (userId) => {
 };
 
 /**
- * 스터디 그룹 목록 조회 API
+ * 스터디 그룹 목록 조회 API (keyword가 있으면 이름 검색)
  */
-export const getAllGroupsAPI = async () => {
+export const getAllGroupsAPI = async (keyword = "") => {
   try {
-    const response = await fetch(`${API_BASE_URL}/groups`, {
+    const query = keyword.trim()
+      ? `?keyword=${encodeURIComponent(keyword.trim())}`
+      : "";
+    const response = await fetch(`${API_BASE_URL}/groups${query}`, {
       method: "GET",
       headers: addVersionToHeaders({
         "Content-Type": "application/json",
@@ -340,10 +343,10 @@ export const getAllGroupsAPI = async () => {
 
     const result = await parseJsonSafe(response);
 
-    if (response.ok) {
+    if (response.ok && result?.success !== false) {
       return {
         success: true,
-        groups: result ?? [],
+        groups: result?.data ?? [],
       };
     }
 
@@ -364,7 +367,45 @@ export const getAllGroupsAPI = async () => {
 };
 
 /**
- * 스터디 그룹 생성 API
+ * 스터디 그룹 상세 조회 API (멤버 포함)
+ */
+export const getGroupDetailAPI = async (groupId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/groups/${groupId}`, {
+      method: "GET",
+      headers: addVersionToHeaders({
+        "Content-Type": "application/json",
+      }),
+      credentials: "include",
+    });
+
+    const result = await parseJsonSafe(response);
+
+    if (response.ok && result?.success !== false) {
+      return {
+        success: true,
+        group: result?.data ?? null,
+      };
+    }
+
+    return {
+      success: false,
+      status: response.status,
+      message:
+        (result && result.message) ||
+        "스터디 그룹 정보를 불러오는 중 오류가 발생했습니다.",
+    };
+  } catch (error) {
+    console.error("스터디 그룹 상세 API 오류:", error);
+    return {
+      success: false,
+      message: "스터디 그룹 정보를 불러오는 중 오류가 발생했습니다.",
+    };
+  }
+};
+
+/**
+ * 스터디 그룹 생성 API (생성한 관리자가 그룹장이 된다)
  */
 export const createGroupAPI = async (groupData) => {
   try {
@@ -379,10 +420,11 @@ export const createGroupAPI = async (groupData) => {
 
     const result = await parseJsonSafe(response);
 
-    if (response.ok) {
+    if (response.ok && result?.success !== false) {
       return {
         success: true,
-        group: result,
+        group: result?.data ?? null,
+        message: result?.message || "스터디 그룹이 생성되었습니다.",
       };
     }
 
@@ -398,6 +440,44 @@ export const createGroupAPI = async (groupData) => {
     return {
       success: false,
       message: "스터디 그룹 생성 중 오류가 발생했습니다.",
+    };
+  }
+};
+
+/**
+ * 스터디 그룹 삭제 API (그룹장만 가능)
+ */
+export const deleteGroupAPI = async (groupId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/groups/${groupId}`, {
+      method: "DELETE",
+      headers: addVersionToHeaders({
+        "Content-Type": "application/json",
+      }),
+      credentials: "include",
+    });
+
+    const result = await parseJsonSafe(response);
+
+    if (response.ok && result?.success !== false) {
+      return {
+        success: true,
+        message: result?.message || "스터디 그룹이 삭제되었습니다.",
+      };
+    }
+
+    return {
+      success: false,
+      status: response.status,
+      message:
+        (result && result.message) ||
+        "스터디 그룹 삭제 중 오류가 발생했습니다.",
+    };
+  } catch (error) {
+    console.error("스터디 그룹 삭제 API 오류:", error);
+    return {
+      success: false,
+      message: "스터디 그룹 삭제 중 오류가 발생했습니다.",
     };
   }
 };
