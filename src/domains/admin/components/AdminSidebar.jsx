@@ -66,6 +66,24 @@ const AdminSidebar = ({ activeSection, activeSubSection, setActiveSection, setAc
           </div>
         </div>
 
+        {/* 스터디 그룹 관리 */}
+        <div className="admin__nav-section">
+          <button
+            onClick={() => handleNavClick('groups', null)}
+            className={`admin__nav-section-title ${activeSection === 'groups' ? 'admin__nav-section-title--active' : ''}`}
+          >
+            스터디 그룹 관리
+          </button>
+          <div className="admin__nav-subsection">
+            <button
+              onClick={() => handleNavClick('groups', 'groups')}
+              className={`admin__nav-item ${activeSection === 'groups' ? 'admin__nav-item--active' : ''}`}
+            >
+              그룹 목록/생성
+            </button>
+          </div>
+        </div>
+
         {/* 글 관리 */}
         <div className="admin__nav-section">
           <button
