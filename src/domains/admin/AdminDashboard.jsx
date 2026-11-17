@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { addVersionToHeaders } from '@/constants/version';
-import NavBar from '@/components/Layout/Header/NavBar';
-import Footer from '@/components/Layout/Footer';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   getAllUsersAPI,
@@ -13,11 +11,7 @@ import {
   rejectUserAPI,
   updateUserRoleAPI,
 } from '@/api/admin/admin';
-import {
-  getBoardListAPI,
-  deleteBoardAPI,
-  toggleBoardPinAPI,
-} from '@/api/board';
+import { getBoardListAPI, deleteBoardAPI, toggleBoardPinAPI } from '@/api/board';
 import {
   getAllCategoriesAdminAPI,
   updateCategoryAPI,
@@ -25,26 +19,49 @@ import {
   deleteCategoryAPI,
   updateCategorySortOrderAPI,
 } from '@/api/category';
+import { updatePointManualBulk } from '@/api/point';
 import UserInfo from './sections/UserInfo';
 import PendingUsers from './sections/PendingUsers';
 import PostManagement from './sections/PostManagement';
 import CategoryManagement from './sections/CategoryManagement';
-import PinPostManagement from './sections/PinPostManagement';
 import TagManagement from './sections/TagManagement';
 import ProfileDecorationManagement from './sections/ProfileDecorationManagement';
 import GroupManagement from './sections/GroupManagement';
-import AdminSidebar from './components/AdminSidebar';
-// import MileagePaymentForm from './components/MileagePaymentForm';
-// import { updatePointManual } from '@/api/point';
+import AdminLayout from './components/AdminLayout';
+import { normalizeSection } from './components/AdminSidebar';
+import { PageHeader } from './components/AdminUI';
 import BulkMileagePaymentForm from './components/BulkMileagePaymentForm.jsx';
-import { updatePointManualBulk } from '@/api/point';
-import './AdminDashboard.css';
+
+/** 마일리지 일괄 지급 요청 (AdminMileage 페이지와 같은 처리) */
+export const grantMileageBulk = async (dataList) => {
+  const requests = dataList.map(({ studentId, mileageAmount, reason }) => ({
+    studentNum: studentId,
+    description: reason,
+    amount: Number(mileageAmount),
+  }));
+  const result = await updatePointManualBulk(requests);
+  if (result.success) {
+    alert(`[일괄 지급 성공]\n총 ${requests.length}명 지급 완료`);
+  } else {
+    alert(`[지급 실패]\n${result.message}`);
+  }
+};
+
+export const MileageSection = ({ initialStudentId }) => (
+  <>
+    <PageHeader
+      title="마일리지 지급"
+      description="여러 회원에게 같은 금액과 사유로 한 번에 지급합니다. 정확한 학번인지 다시 한번 확인해 주세요."
+    />
+    <BulkMileagePaymentForm onGrant={grantMileageBulk} initialStudentId={initialStudentId} />
+  </>
+);
 
 function AdminDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [activeSection, setActiveSection] = useState('category-order');
-  const [activeSubSection, setActiveSubSection] = useState(null);
+  const [activeSection, setActiveSection] = useState('user-info');
+  const [mileageStudentId, setMileageStudentId] = useState('');
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
@@ -60,41 +77,32 @@ function AdminDashboard() {
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState(null);
   const [selectedPostCategoryId, setSelectedPostCategoryId] = useState(null);
-  const [selectedPinPostCategoryId, setSelectedPinPostCategoryId] =
-    useState(null);
-  const [pinPosts, setPinPosts] = useState([]);
-  const [pinPostsLoading, setPinPostsLoading] = useState(false);
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategorySlug, setNewCategorySlug] = useState('');
   const [newCategoryParentId, setNewCategoryParentId] = useState(null);
   const [newCategoryRedirectUrl, setNewCategoryRedirectUrl] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
-  const [categoryTags, setCategoryTags] = useState([]); // 선택된 카테고리의 태그 목록
   const [categoryRedirectUrl, setCategoryRedirectUrl] = useState(''); // 선택된 카테고리의 바로가기 URL
-  const [newTagInput, setNewTagInput] = useState(''); // 새 태그 입력 필드
-  const [savingTags, setSavingTags] = useState(false); // 태그 저장 중 상태
 
   // 카테고리 순서 드래그앤드롭 상태
   const [localCategoryTree, setLocalCategoryTree] = useState([]);
-  const [draggedItemId, setDraggedItemId] = useState(null);
-  const [dragOverItemId, setDragOverItemId] = useState(null);
   const [savingOrder, setSavingOrder] = useState(false);
   const [orderChanged, setOrderChanged] = useState(false);
 
-  // 사이드바에서 넘겨준 상태 처리 (다른 페이지에서 관리자 홈으로 돌아올 때)
+  // 다른 페이지에서 관리자 화면으로 넘어올 때 넘겨준 섹션 처리
   useEffect(() => {
     if (location.state) {
-      if (location.state.section) setActiveSection(location.state.section);
-      if (location.state.subSection)
-        setActiveSubSection(location.state.subSection);
+      if (location.state.section) setActiveSection(normalizeSection(location.state.section));
+      if (location.state.studentId) setMileageStudentId(String(location.state.studentId));
       // 상태 사용 후 초기화 (뒤로가기 시 중복 처리 방지)
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
 
-  const goBack = () => {
-    navigate('/');
+  const goToSection = (section) => {
+    setActiveSection(section);
+    window.scrollTo({ top: 0 });
   };
 
   const loadUsers = async () => {
@@ -161,20 +169,18 @@ function AdminDashboard() {
     }
   };
 
-  const loadPendingUsers = async () => {
+  const loadPendingUsers = async ({ silent = false } = {}) => {
     setPendingUsersLoading(true);
     try {
       const result = await getPendingUsersAPI();
       if (result.success) {
         setPendingUsers(result.users || []);
-      } else {
-        alert(
-          '승인 대기 사용자 목록을 불러오는데 실패했습니다: ' + result.message
-        );
+      } else if (!silent) {
+        alert('승인 대기 사용자 목록을 불러오는데 실패했습니다: ' + result.message);
       }
     } catch (error) {
       console.error('승인 대기 사용자 목록 로드 오류:', error);
-      alert('승인 대기 사용자 목록을 불러오는 중 오류가 발생했습니다.');
+      if (!silent) alert('승인 대기 사용자 목록을 불러오는 중 오류가 발생했습니다.');
     } finally {
       setPendingUsersLoading(false);
     }
@@ -185,18 +191,23 @@ function AdminDashboard() {
     try {
       const allCategories = await getAllCategoriesAdminAPI();
       setCategories(allCategories);
-      console.log('카테고리 목록 로드 성공:', allCategories.length, '개');
     } catch (error) {
       console.error('카테고리 목록 로드 오류:', error);
       const errorMessage =
-        error instanceof Error
-          ? error.message
-          : '카테고리 목록을 불러오는 중 오류가 발생했습니다.';
+        error instanceof Error ? error.message : '카테고리 목록을 불러오는 중 오류가 발생했습니다.';
       alert(errorMessage);
       setCategories([]); // 에러 발생 시 빈 배열로 설정
     } finally {
       setCategoriesLoading(false);
     }
+  };
+
+  const resetAddCategoryForm = () => {
+    setShowAddCategoryModal(false);
+    setNewCategoryName('');
+    setNewCategorySlug('');
+    setNewCategoryParentId(null);
+    setNewCategoryRedirectUrl('');
   };
 
   const handleAddCategory = async () => {
@@ -229,11 +240,8 @@ function AdminDashboard() {
 
       if (result.success) {
         alert('카테고리가 성공적으로 추가되었습니다.');
-        setShowAddCategoryModal(false);
-        setNewCategoryName('');
-        setNewCategorySlug('');
-        setNewCategoryParentId(null);
-        setNewCategoryRedirectUrl(''); // 백엔드 처리 시간 고려
+        resetAddCategoryForm();
+        // 백엔드 처리 시간 고려
         setTimeout(() => {
           loadCategories();
         }, 300);
@@ -248,12 +256,10 @@ function AdminDashboard() {
     }
   };
 
-  const handleToggleCategoryActive = async (category, e) => {
-    e.stopPropagation();
+  // 확인은 화면(CategoryManagement)에서 받는다
+  const handleToggleCategoryActive = async (category) => {
     const nextActive = !category.isActive;
     const action = nextActive ? '표시' : '숨김';
-    if (!confirm(`"${category.name}" 카테고리를 ${action} 처리하시겠습니까?`))
-      return;
     try {
       const result = await updateCategoryAPI(category.id, {
         name: category.name,
@@ -273,18 +279,14 @@ function AdminDashboard() {
     }
   };
 
+  // 확인은 화면(CategoryManagement)에서 받는다
   const handleDeleteCategory = async () => {
     if (!selectedCategoryId) return;
-    if (!window.confirm('정말 이 카테고리를 삭제하시겠습니까?')) return;
-
     try {
-      // 이제 await를 정상적으로 사용할 수 있습니다.
       const result = await deleteCategoryAPI(selectedCategoryId);
-
       if (result.success) {
         alert('카테고리가 성공적으로 삭제되었습니다.');
         setSelectedCategoryId(null); // 선택 해제
-
         // 약간의 지연 후 목록 새로고침
         setTimeout(() => {
           loadCategories();
@@ -298,58 +300,45 @@ function AdminDashboard() {
     }
   };
 
-  const handleApproveUser = async (userId) => {
-    if (!confirm('이 사용자를 승인하시겠습니까?')) return;
-    try {
-      const result = await approveUserAPI(userId);
-      if (result.success) {
-        alert('사용자가 승인되었습니다.');
-        loadPendingUsers();
-        loadUsers();
-      } else {
-        alert(result.message || '사용자 승인에 실패했습니다.');
+  /** 여러 명을 차례로 승인/거부하고 결과를 한 번에 알린다. 확인은 화면(PendingUsers)에서 받는다. */
+  const runForUsers = async (ids, apiFn, verb) => {
+    const failures = [];
+    for (const id of ids) {
+      try {
+        const result = await apiFn(id);
+        if (!result.success) failures.push(result.message || `${id}번 사용자 ${verb} 실패`);
+      } catch (error) {
+        console.error(`사용자 ${verb} 오류:`, error);
+        failures.push(`${id}번 사용자 ${verb} 중 오류`);
       }
-    } catch (error) {
-      console.error('사용자 승인 오류:', error);
-      alert('사용자 승인 중 오류가 발생했습니다.');
     }
+    const done = ids.length - failures.length;
+    if (failures.length === 0) {
+      alert(ids.length > 1 ? `${done}명을 ${verb}했습니다.` : `사용자를 ${verb}했습니다.`);
+    } else {
+      alert(`${done}명 ${verb}, ${failures.length}명 실패\n\n${failures.join('\n')}`);
+    }
+    loadPendingUsers();
+    loadUsers();
   };
 
-  const handleRejectUser = async (userId) => {
-    if (!confirm('이 사용자의 승인을 거부하시겠습니까?')) return;
-    try {
-      const result = await rejectUserAPI(userId);
-      if (result.success) {
-        alert('사용자 승인이 거부되었습니다.');
-        loadPendingUsers();
-        loadUsers();
-      } else {
-        alert(result.message || '사용자 거부에 실패했습니다.');
-      }
-    } catch (error) {
-      console.error('사용자 거부 오류:', error);
-      alert('사용자 거부 중 오류가 발생했습니다.');
-    }
+  const approveUsers = (ids) => runForUsers(ids, approveUserAPI, '승인');
+  const rejectUsers = (ids) => runForUsers(ids, rejectUserAPI, '거부');
+
+  const reloadSelectedPosts = () => {
+    const selectedCategory = selectedPostCategoryId
+      ? findCategoryById(activeCategoryTree, selectedPostCategoryId)
+      : null;
+    loadPosts(selectedCategory ? selectedCategory.slug : null);
   };
 
+  // 확인은 화면(PostManagement)에서 받는다
   const handleDeletePost = async (postId) => {
-    if (!confirm('정말 이 게시글을 삭제하시겠습니까?')) return;
     try {
       const result = await deleteBoardAPI(postId);
       if (result.success) {
         alert('게시글이 삭제되었습니다.');
-        // 현재 선택된 카테고리의 게시글 목록 다시 로드
-        if (selectedPostCategoryId) {
-          const selectedCategory = findCategoryById(
-            activeCategoryTree,
-            selectedPostCategoryId
-          );
-          if (selectedCategory) {
-            loadPosts(selectedCategory.slug);
-          }
-        } else {
-          loadPosts();
-        }
+        reloadSelectedPosts();
       } else {
         alert(result.message || '게시글 삭제에 실패했습니다.');
       }
@@ -364,43 +353,12 @@ function AdminDashboard() {
     navigate(`/board/${slug}/edit/${post.id}`);
   };
 
-  const loadPinPosts = async (categorySlug = null) => {
-    setPinPostsLoading(true);
-    try {
-      const slug = categorySlug || 'news';
-      const result = await getBoardListAPI({ slug, page: 0, size: 100 });
-      if (result.success) {
-        setPinPosts(result.posts || []);
-      } else {
-        alert('게시글 목록을 불러오는데 실패했습니다: ' + result.message);
-        setPinPosts([]);
-      }
-    } catch (error) {
-      console.error('게시글 목록 로드 오류:', error);
-      alert('게시글 목록을 불러오는 중 오류가 발생했습니다.');
-      setPinPosts([]);
-    } finally {
-      setPinPostsLoading(false);
-    }
-  };
-
   const handleTogglePin = async (postId) => {
     try {
       const result = await toggleBoardPinAPI(postId);
       if (result.success) {
-        alert(result.message || '게시글 고정 상태가 변경되었습니다.');
-        // 현재 선택된 카테고리의 게시글 목록 다시 로드
-        if (selectedPinPostCategoryId) {
-          const selectedCategory = findCategoryById(
-            activeCategoryTree,
-            selectedPinPostCategoryId
-          );
-          if (selectedCategory) {
-            loadPinPosts(selectedCategory.slug);
-          }
-        } else {
-          loadPinPosts();
-        }
+        // 고정 표시가 바로 바뀌므로 성공 알림은 띄우지 않는다
+        reloadSelectedPosts();
       } else {
         alert(result.message || '게시글 고정/해제에 실패했습니다.');
       }
@@ -426,20 +384,17 @@ function AdminDashboard() {
 
     setUploadingImage(true);
     try {
-      const presignedResponse = await fetch(
-        `/api/users/me/profile-image/presigned-url`,
-        {
-          method: 'POST',
-          headers: addVersionToHeaders({
-            'Content-Type': 'application/json',
-          }),
-          credentials: 'include',
-          body: JSON.stringify({
-            fileName: file.name,
-            contentType: file.type,
-          }),
-        }
-      );
+      const presignedResponse = await fetch(`/api/users/me/profile-image/presigned-url`, {
+        method: 'POST',
+        headers: addVersionToHeaders({
+          'Content-Type': 'application/json',
+        }),
+        credentials: 'include',
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType: file.type,
+        }),
+      });
 
       const presignedResult = await presignedResponse.json();
 
@@ -481,16 +436,12 @@ function AdminDashboard() {
         });
         setUsers(
           users.map((u) =>
-            u.id === selectedUser.id
-              ? { ...u, profileImage: dbUpdateResult.profileImage }
-              : u
+            u.id === selectedUser.id ? { ...u, profileImage: dbUpdateResult.profileImage } : u
           )
         );
         alert('프로필 이미지가 업데이트되었습니다.');
       } else {
-        alert(
-          dbUpdateResult.message || '프로필 이미지 업데이트에 실패했습니다.'
-        );
+        alert(dbUpdateResult.message || '프로필 이미지 업데이트에 실패했습니다.');
       }
     } catch (error) {
       console.error('이미지 업로드 오류:', error);
@@ -518,9 +469,7 @@ function AdminDashboard() {
           const nextRoles = (result.roles || []).map((r) =>
             typeof r === 'string' ? { authorityName: r } : r
           );
-          setSelectedUser((prev) =>
-            prev ? { ...prev, authorities: nextRoles } : prev
-          );
+          setSelectedUser((prev) => (prev ? { ...prev, authorities: nextRoles } : prev));
         }
       } else {
         alert(result.message || '권한 부여에 실패했습니다.');
@@ -550,9 +499,7 @@ function AdminDashboard() {
           const nextRoles = (result.roles || []).map((r) =>
             typeof r === 'string' ? { authorityName: r } : r
           );
-          setSelectedUser((prev) =>
-            prev ? { ...prev, authorities: nextRoles } : prev
-          );
+          setSelectedUser((prev) => (prev ? { ...prev, authorities: nextRoles } : prev));
         }
       } else {
         alert(result.message || '권한 제거에 실패했습니다.');
@@ -566,70 +513,40 @@ function AdminDashboard() {
   };
 
   // 카테고리를 트리 구조로 변환
-  const buildCategoryTree = (categories) => {
+  const buildCategoryTree = (list) => {
     const categoryMap = new Map();
     const rootCategories = [];
 
-    // 모든 카테고리를 맵에 추가
-    categories.forEach((cat) => {
+    list.forEach((cat) => {
       categoryMap.set(cat.id, { ...cat, children: [] });
     });
 
-    // 부모-자식 관계 구성
-    categories.forEach((cat) => {
+    list.forEach((cat) => {
       const category = categoryMap.get(cat.id);
       if (cat.parentId && categoryMap.has(cat.parentId)) {
-        const parent = categoryMap.get(cat.parentId);
-        if (parent && category) {
-          parent.children = parent.children || [];
-          parent.children.push(category);
-        }
-      } else {
-        if (category) {
-          rootCategories.push(category);
-        }
+        categoryMap.get(cat.parentId).children.push(category);
+      } else if (category) {
+        rootCategories.push(category);
       }
     });
 
     return rootCategories;
   };
 
-  // active 카테고리만 필터링하는 함수
-  const filterActiveCategories = (tree) => {
-    const filterRecursive = (items) => {
-      return items
-        .filter((item) => item.isActive !== false)
-        .map((item) => ({
-          ...item,
-          children:
-            item.children && item.children.length > 0
-              ? filterRecursive(item.children)
-              : [],
-        }));
-    };
-    return filterRecursive(tree);
-  };
+  // active 카테고리만 필터링
+  const filterActiveCategories = (tree) =>
+    tree
+      .filter((item) => item.isActive !== false)
+      .map((item) => ({
+        ...item,
+        children: item.children && item.children.length > 0 ? filterActiveCategories(item.children) : [],
+      }));
 
   const categoryTree = buildCategoryTree(categories);
   const activeCategoryTree = filterActiveCategories(categoryTree);
 
-  // 전체 카테고리 수 계산
-  const getTotalCategoryCount = (tree) => {
-    let count = 0;
-    const countRecursive = (items) => {
-      items.forEach((item) => {
-        count++;
-        if (item.children && item.children.length > 0) {
-          countRecursive(item.children);
-        }
-      });
-    };
-    countRecursive(tree);
-    return count;
-  };
-
   // 선택된 카테고리 찾기
-  const findCategoryById = (tree, id) => {
+  function findCategoryById(tree, id) {
     for (const cat of tree) {
       if (cat.id === id) return cat;
       if (cat.children && cat.children.length > 0) {
@@ -638,11 +555,9 @@ function AdminDashboard() {
       }
     }
     return null;
-  };
+  }
 
-  const selectedCategoryData = selectedCategoryId
-    ? findCategoryById(categoryTree, selectedCategoryId)
-    : null;
+  const selectedCategoryData = selectedCategoryId ? findCategoryById(categoryTree, selectedCategoryId) : null;
 
   // 모든 카테고리를 평탄화 (부모 선택용)
   const flattenCategories = (tree, level = 0) => {
@@ -658,7 +573,7 @@ function AdminDashboard() {
 
   const allCategoriesFlat = flattenCategories(activeCategoryTree);
 
-  // 드래그앤드롭으로 카테고리 순서 변경
+  // 드래그앤드롭으로 카테고리 순서 변경 (같은 부모 안에서만)
   const handleCategoryDrop = (draggedId, targetId) => {
     const findParentId = (nodes, id, parentId = null) => {
       for (const node of nodes) {
@@ -735,128 +650,19 @@ function AdminDashboard() {
     }
   };
 
-  // 카테고리 렌더링 (재귀) - 순서 설정용
-  const renderCategoryOrderItem = (category, level = 0) => {
-    const isParent = category.children && category.children.length > 0;
-    const isSelected = selectedCategoryId === category.id;
-    const childCount = category.children ? category.children.length : 0;
-    const isInactive = category.isActive === false;
-    const isDragging = draggedItemId === category.id;
-    const isDragOver = dragOverItemId === category.id;
-
-    return (
-      <div key={category.id}>
-        <div
-          className={`admin__catorder-item ${isSelected ? 'admin__catorder-item--selected' : ''} ${level > 0 ? 'admin__catorder-item--child' : ''} ${isInactive ? 'admin__catorder-item--inactive' : ''} ${isDragOver ? 'admin__catorder-item--drag-over' : ''}`}
-          style={{
-            paddingLeft: `${12 + level * 20}px`,
-            opacity: isDragging ? 0.4 : 1,
-          }}
-          draggable
-          onDragStart={(e) => {
-            setDraggedItemId(category.id);
-            e.dataTransfer.effectAllowed = 'move';
-          }}
-          onDragEnd={() => {
-            setDraggedItemId(null);
-            setDragOverItemId(null);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (draggedItemId !== category.id) {
-              setDragOverItemId(category.id);
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (draggedItemId && draggedItemId !== category.id) {
-              handleCategoryDrop(draggedItemId, category.id);
-            }
-            setDraggedItemId(null);
-            setDragOverItemId(null);
-          }}
-          onClick={() => setSelectedCategoryId(category.id)}
-        >
-          <span className="admin__catorder-drag" style={{ cursor: 'grab' }}>
-            ⠿
-          </span>
-          {level > 0 && <span className="admin__catorder-prefix">ㄴ</span>}
-          <span
-            className={`admin__catorder-name ${isInactive ? 'admin__catorder-name--inactive' : ''}`}
-          >
-            {category.name}
-            {isParent && (
-              <span className="admin__catorder-count">({childCount})</span>
-            )}
-          </span>
-          <button
-            onClick={(e) => handleToggleCategoryActive(category, e)}
-            style={{
-              marginLeft: 'auto',
-              fontSize: '11px',
-              padding: '2px 7px',
-              border: '1px solid',
-              borderRadius: '3px',
-              cursor: 'pointer',
-              background: 'none',
-              color: isInactive ? '#38a169' : '#a0aec0',
-              borderColor: isInactive ? '#38a169' : '#cbd5e0',
-              flexShrink: 0,
-            }}
-            title={isInactive ? '표시' : '숨김'}
-          >
-            {isInactive ? '표시' : '숨김'}
-          </button>
-        </div>
-        {isParent &&
-          category.children?.map((child) =>
-            renderCategoryOrderItem(child, level + 1)
-          )}
-      </div>
-    );
-  };
-
-  // 카테고리 렌더링 (재귀) - 기본용
-  const renderCategoryItem = (category, level = 0) => {
-    const indent = level * 39;
-    const isParent = category.children && category.children.length > 0;
-    const itemClass =
-      level === 0
-        ? 'admin__category-item admin__category-item--parent'
-        : 'admin__category-item admin__category-item--child';
-
-    return (
-      <div key={category.id}>
-        <div className={itemClass} style={{ marginLeft: `${indent}px` }}>
-          {category.name}
-        </div>
-        {isParent &&
-          category.children?.map((child) =>
-            renderCategoryItem(child, level + 1)
-          )}
-      </div>
-    );
-  };
+  // 처음 들어오면 승인 대기 수를 불러와 사이드바·알림에 보여준다
+  useEffect(() => {
+    loadPendingUsers({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (activeSection === 'pending') {
       loadPendingUsers();
-    } else if (
-      activeSection === 'category-order' ||
-      activeSection === 'category-edit' ||
-      activeSection === 'category-deactivate' ||
-      activeSection === 'tag-management'
-    ) {
+    } else if (activeSection === 'category-order' || activeSection === 'tag-management') {
       loadCategories();
     } else if (activeSection === 'posts') {
-      // 포스트 수정/삭제 섹션: 카테고리 목록 로드 (게시글은 카테고리 선택 시 로드)
-      if (categories.length === 0) {
-        loadCategories();
-      }
-    } else if (activeSection === 'pin-post') {
-      // 게시글 고정 섹션: 카테고리 목록 로드 (게시글은 카테고리 선택 시 로드)
+      // 게시글 관리: 카테고리 목록 로드 (게시글은 카테고리 선택 시 로드)
       if (categories.length === 0) {
         loadCategories();
       }
@@ -864,30 +670,20 @@ function AdminDashboard() {
       loadUsers();
       loadAvailableRoles();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
 
-  // 선택된 카테고리가 변경될 때 태그 목록 로드
+  // 선택된 카테고리가 바뀌면 바로가기 URL 입력값을 맞춘다
   useEffect(() => {
-    if (selectedCategoryData?.availableTags) {
-      try {
-        const tags = JSON.parse(selectedCategoryData.availableTags);
-        setCategoryTags(Array.isArray(tags) ? tags : []);
-      } catch {
-        setCategoryTags([]);
-      }
-    } else {
-      setCategoryTags([]);
-    }
-    setNewTagInput(''); // 새 태그 입력 필드 초기화
-    setCategoryRedirectUrl(selectedCategoryData?.redirectUrl || ''); // 바로가기 URL 초기화
+    setCategoryRedirectUrl(selectedCategoryData?.redirectUrl || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategoryId]);
 
   // categoryTree가 변경되면 localCategoryTree 동기화
   useEffect(() => {
-    setLocalCategoryTree(
-      JSON.parse(JSON.stringify(buildCategoryTree(categories)))
-    );
+    setLocalCategoryTree(JSON.parse(JSON.stringify(buildCategoryTree(categories))));
     setOrderChanged(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categories]);
 
   const getUserRoles = (user) => {
@@ -898,10 +694,6 @@ function AdminDashboard() {
       return user.roles.map((role) => role.authorityName || role);
     }
     return [];
-  };
-
-  const hasRole = (user, role) => {
-    return getUserRoles(user).some((r) => r.includes(role));
   };
 
   const renderContent = () => {
@@ -915,7 +707,6 @@ function AdminDashboard() {
             selectedUser={selectedUser}
             setSelectedUser={setSelectedUser}
             onSelectUser={handleSelectUser}
-            hasRole={hasRole}
             getUserRoles={getUserRoles}
             uploadingImage={uploadingImage}
             handleImageUpload={handleImageUpload}
@@ -924,6 +715,12 @@ function AdminDashboard() {
             handleGrantRole={handleGrantRole}
             removingRole={removingRole}
             handleRemoveRole={handleRemoveRole}
+            pendingCount={pendingUsers.length}
+            onGoPending={() => goToSection('pending')}
+            onGoMileage={(studentId) => {
+              setMileageStudentId(String(studentId || ''));
+              goToSection('mileage');
+            }}
           />
         );
       case 'pending':
@@ -931,9 +728,9 @@ function AdminDashboard() {
           <PendingUsers
             pendingUsers={pendingUsers}
             pendingUsersLoading={pendingUsersLoading}
-            loadPendingUsers={loadPendingUsers}
-            handleApproveUser={handleApproveUser}
-            handleRejectUser={handleRejectUser}
+            loadPendingUsers={() => loadPendingUsers()}
+            approveUsers={approveUsers}
+            rejectUsers={rejectUsers}
           />
         );
       case 'posts':
@@ -941,42 +738,34 @@ function AdminDashboard() {
           <PostManagement
             categoriesLoading={categoriesLoading}
             activeCategoryTree={activeCategoryTree}
-            getTotalCategoryCount={getTotalCategoryCount}
+            loadCategories={loadCategories}
             selectedPostCategoryId={selectedPostCategoryId}
             setSelectedPostCategoryId={setSelectedPostCategoryId}
             loadPosts={loadPosts}
-            loadCategories={loadCategories}
             postsLoading={postsLoading}
             posts={posts}
             handleDeletePost={handleDeletePost}
-            findCategoryById={findCategoryById}
+            handleTogglePin={handleTogglePin}
+            handleEditPost={handleEditPost}
           />
         );
       case 'category-order':
-      case 'category-edit':
-      case 'category-deactivate':
         return (
           <CategoryManagement
-            activeSection={activeSection}
             setShowAddCategoryModal={setShowAddCategoryModal}
             handleDeleteCategory={handleDeleteCategory}
             selectedCategoryId={selectedCategoryId}
-            getTotalCategoryCount={getTotalCategoryCount}
+            setSelectedCategoryId={setSelectedCategoryId}
             categoryTree={categoryTree}
             categoriesLoading={categoriesLoading}
-            renderCategoryOrderItem={renderCategoryOrderItem}
             loadCategories={loadCategories}
             selectedCategoryData={selectedCategoryData}
-            categoryTags={categoryTags}
-            setCategoryTags={setCategoryTags}
-            newTagInput={newTagInput}
-            setNewTagInput={setNewTagInput}
             updateCategoryAPI={updateCategoryAPI}
-            savingTags={savingTags}
-            setSavingTags={setSavingTags}
             categoryRedirectUrl={categoryRedirectUrl}
             setCategoryRedirectUrl={setCategoryRedirectUrl}
             localCategoryTree={localCategoryTree}
+            handleCategoryDrop={handleCategoryDrop}
+            handleToggleCategoryActive={handleToggleCategoryActive}
             handleSaveOrder={handleSaveOrder}
             savingOrder={savingOrder}
             orderChanged={orderChanged}
@@ -985,59 +774,15 @@ function AdminDashboard() {
       case 'tag-management':
         return (
           <TagManagement
-            categories={categories}
-            categoriesLoading={categoriesLoading}
-            loadCategories={loadCategories}
             categoryTree={categoryTree}
-            localCategoryTree={localCategoryTree}
-            getTotalCategoryCount={getTotalCategoryCount}
-            renderCategoryOrderItem={renderCategoryOrderItem}
-            selectedCategoryId={selectedCategoryId}
-          />
-        );
-      case 'pin-post':
-        return (
-          <PinPostManagement
             categoriesLoading={categoriesLoading}
-            activeCategoryTree={activeCategoryTree}
-            getTotalCategoryCount={getTotalCategoryCount}
-            selectedPinPostCategoryId={selectedPinPostCategoryId}
-            setSelectedPinPostCategoryId={setSelectedPinPostCategoryId}
-            loadPinPosts={loadPinPosts}
             loadCategories={loadCategories}
-            pinPostsLoading={pinPostsLoading}
-            pinPosts={pinPosts}
-            handleTogglePin={handleTogglePin}
-            findCategoryById={findCategoryById}
+            selectedCategoryId={selectedCategoryId}
+            setSelectedCategoryId={setSelectedCategoryId}
           />
         );
       case 'mileage':
-        return (
-          <div>
-            <div className="admin__header-row">
-              <h2 className="admin__section-title">마일리지 일괄 지급</h2>
-            </div>
-            <BulkMileagePaymentForm
-              onGrant={async (dataList) => {
-                const requests = dataList.map(({ studentId, mileageAmount, reason }) => ({
-                  studentNum: studentId,
-                  description: reason,
-                  amount: Number(mileageAmount),
-                }));
-                const result = await updatePointManualBulk(requests);
-                  if (result.success) {
-                    alert(`[일괄 지급 성공]\n총 ${requests.length}명 지급 완료`);
-                  } else {
-                    alert(`[지급 실패]\n${result.message}`);
-                  }
-              }}
-            />
-            <div style={{ marginTop: '32px', fontSize: '13px', color: '#999' }}>
-              <p>· 정확한 학번을 입력했는지 다시 한번 확인해 주세요.</p>
-              <p>· 사유는 사용자 마이페이지에 그대로 노출됩니다.</p>
-            </div>
-          </div>
-        );
+        return <MileageSection initialStudentId={mileageStudentId} />;
       case 'profile-decorations':
         return <ProfileDecorationManagement />;
       case 'groups':
@@ -1048,247 +793,92 @@ function AdminDashboard() {
   };
 
   return (
-    <div className="layout">
-      <NavBar />
-      <div className="layout__body">
-        <div className="admin">
-          {/* Sidebar - Component로 분리 */}
-          <AdminSidebar
-            activeSection={activeSection}
-            activeSubSection={activeSubSection}
-            setActiveSection={setActiveSection}
-            setActiveSubSection={setActiveSubSection}
-            pendingUsersCount={pendingUsers.length}
-            theme="default"
-          />
-
-          {/* Content */}
-          <main className="admin__content">{renderContent()}</main>
-        </div>
-      </div>
-      <Footer />
+    <AdminLayout activeSection={activeSection} onSelect={goToSection} pendingUsersCount={pendingUsers.length}>
+      {renderContent()}
 
       {/* 카테고리 추가 모달 */}
       {showAddCategoryModal && (
-        <div
-          className="admin__modal-overlay"
-          onClick={() => setShowAddCategoryModal(false)}
-        >
-          <div className="admin__modal" onClick={(e) => e.stopPropagation()}>
-            <div className="admin__modal-header">
-              <h3>카테고리 추가</h3>
-              <button
-                className="admin__modal-close"
-                onClick={() => {
-                  setShowAddCategoryModal(false);
-                  setNewCategoryName('');
-                  setNewCategorySlug('');
-                  setNewCategoryParentId(null);
-                  setNewCategoryRedirectUrl('');
-                }}
-              >
+        <div className="adm-modal-overlay" onClick={resetAddCategoryForm}>
+          <div className="adm-modal adm-modal--wide" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="adm-modal__head">
+              <p className="adm-modal__title">카테고리 추가</p>
+              <button type="button" className="adm-icon-btn" onClick={resetAddCategoryForm} aria-label="닫기">
                 ✕
               </button>
             </div>
 
-            <div style={{ padding: '20px' }}>
-              <div style={{ marginBottom: '16px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    fontFamily: 'Pretendard, sans-serif',
-                    color: 'var(--color-black)',
-                  }}
-                >
-                  카테고리명 *
-                </label>
+            <div className="adm-form">
+              <label className="adm-field">
+                <span className="adm-label">카테고리명 *</span>
                 <input
-                  type="text"
+                  className="adm-input"
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
                   placeholder="예: 공지사항"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    fontSize: '14px',
-                    fontFamily: 'Pretendard, sans-serif',
-                    border: '1px solid var(--color-gray-200)',
-                    borderRadius: '4px',
-                    outline: 'none',
-                  }}
+                  autoFocus
                 />
-              </div>
+              </label>
 
-              <div style={{ marginBottom: '16px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    fontFamily: 'Pretendard, sans-serif',
-                    color: 'var(--color-black)',
-                  }}
-                >
-                  슬러그 (URL) *
-                </label>
+              <label className="adm-field">
+                <span className="adm-label">슬러그 (URL) *</span>
                 <input
-                  type="text"
+                  className="adm-input"
                   value={newCategorySlug}
                   onChange={(e) => setNewCategorySlug(e.target.value)}
                   placeholder="예: notice"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    fontSize: '14px',
-                    fontFamily: 'Pretendard, sans-serif',
-                    border: '1px solid var(--color-gray-200)',
-                    borderRadius: '4px',
-                    outline: 'none',
-                  }}
                 />
-                <p
-                  style={{
-                    marginTop: '4px',
-                    fontSize: '11px',
-                    color: 'var(--color-gray-400)',
-                    fontFamily: 'Pretendard, sans-serif',
-                  }}
-                >
-                  영문 소문자, 숫자, 하이픈(-)만 사용 가능합니다.
-                </p>
-              </div>
+                <span className="adm-help">영문 소문자, 숫자, 하이픈(-)만 사용 가능합니다.</span>
+              </label>
 
-              <div style={{ marginBottom: '20px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    fontFamily: 'Pretendard, sans-serif',
-                    color: 'var(--color-black)',
-                  }}
-                >
-                  부모 카테고리 (선택사항)
-                </label>
+              <label className="adm-field">
+                <span className="adm-label">상위 카테고리</span>
                 <select
+                  className="adm-select"
                   value={newCategoryParentId || ''}
-                  onChange={(e) =>
-                    setNewCategoryParentId(
-                      e.target.value ? Number(e.target.value) : null
-                    )
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    fontSize: '14px',
-                    fontFamily: 'Pretendard, sans-serif',
-                    border: '1px solid var(--color-gray-200)',
-                    borderRadius: '4px',
-                    outline: 'none',
-                    backgroundColor: '#ffffff',
-                  }}
+                  onChange={(e) => setNewCategoryParentId(e.target.value ? Number(e.target.value) : null)}
                 >
                   <option value="">최상위 카테고리</option>
                   {allCategoriesFlat.map((category) => {
                     const isChild = category.level > 0;
-
                     return (
-                      <option 
-                        key={category.id} 
+                      <option
+                        key={category.id}
                         value={category.id}
                         disabled={isChild} // 2단계 카테고리는 부모로 선택 불가
-                        style={isChild ? { color: '#ccc' } : {}}
                       >
-                        {'  '.repeat(category.level)}
+                        {'  '.repeat(category.level)}
                         {category.name}
                       </option>
                     );
-                  })}                  
+                  })}
                 </select>
-              </div>
+              </label>
 
-              <div style={{ marginBottom: '20px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    fontFamily: 'Pretendard, sans-serif',
-                    color: 'var(--color-black)',
-                  }}
-                >
-                  바로가기 URL (선택사항)
-                </label>
+              <label className="adm-field">
+                <span className="adm-label">바로가기 URL (선택)</span>
                 <input
                   type="url"
+                  className="adm-input"
                   value={newCategoryRedirectUrl}
                   onChange={(e) => setNewCategoryRedirectUrl(e.target.value)}
                   placeholder="예: https://example.com"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    fontSize: '14px',
-                    fontFamily: 'Pretendard, sans-serif',
-                    border: '1px solid var(--color-gray-200)',
-                    borderRadius: '4px',
-                    outline: 'none',
-                  }}
                 />
-                <p
-                  style={{
-                    marginTop: '4px',
-                    fontSize: '11px',
-                    color: 'var(--color-gray-400)',
-                    fontFamily: 'Pretendard, sans-serif',
-                  }}
-                >
-                  입력하면 클릭 시 해당 URL로 바로 이동합니다. 게시판으로
-                  사용하려면 비워두세요.
-                </p>
-              </div>
+                <span className="adm-help">입력하면 클릭 시 해당 URL로 바로 이동합니다. 게시판으로 사용하려면 비워두세요.</span>
+              </label>
+            </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '8px',
-                  justifyContent: 'flex-end',
-                  paddingTop: '16px',
-                  borderTop: '1px solid var(--color-gray-200)',
-                }}
-              >
-                <button
-                  className="admin__btn"
-                  onClick={() => {
-                    setShowAddCategoryModal(false);
-                    setNewCategoryName('');
-                    setNewCategorySlug('');
-                    setNewCategoryParentId(null);
-                    setNewCategoryRedirectUrl('');
-                  }}
-                  disabled={addingCategory}
-                >
-                  취소
-                </button>
-                <button
-                  className="admin__btn--approve"
-                  onClick={handleAddCategory}
-                  disabled={addingCategory}
-                  style={{ padding: '8px 20px' }}
-                >
-                  {addingCategory ? '추가 중...' : '추가'}
-                </button>
-              </div>
+            <div className="adm-modal__actions">
+              <button type="button" className="adm-btn adm-btn--secondary" onClick={resetAddCategoryForm} disabled={addingCategory}>
+                취소
+              </button>
+              <button type="button" className="adm-btn adm-btn--primary" onClick={handleAddCategory} disabled={addingCategory}>
+                {addingCategory ? '추가 중...' : '추가'}
+              </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </AdminLayout>
   );
 }
 
