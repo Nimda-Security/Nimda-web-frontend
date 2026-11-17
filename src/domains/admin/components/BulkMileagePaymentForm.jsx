@@ -1,11 +1,24 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Info, X } from 'lucide-react';
+import { confirmDialog, cx, formatDate } from './AdminUI';
+
+const QUICK_AMOUNTS = [100, 500, 1000];
+
+/** 붙여넣거나 입력한 문자열을 학번 목록으로 쪼갠다 (쉼표·공백·줄바꿈 구분). */
+const splitIds = (text) =>
+  text
+    .split(/[\s,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 const BulkMileagePaymentForm = ({ onGrant, initialStudentId }) => {
-  const [studentIds, setStudentIds] = useState([initialStudentId || '']);
+  const [studentIds, setStudentIds] = useState(initialStudentId ? [String(initialStudentId)] : []);
+  const [draft, setDraft] = useState('');
   const [mileageAmount, setMileageAmount] = useState('');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  const inputRef = useRef(null);
   const datalistId = useRef(`student-suggestions-${Math.random().toString(36).slice(2)}`);
 
   useEffect(() => {
@@ -21,25 +34,55 @@ const BulkMileagePaymentForm = ({ onGrant, initialStudentId }) => {
     fetchSuggestions();
   }, []);
 
-  // 학번으로 이름 반환
-  const getNameByStudentNum = (studentNum) => {
-    const found = suggestions.find((u) => u.studentNum === studentNum);
-    return found ? found.name : null;
+  useEffect(() => {
+    if (initialStudentId) setStudentIds((prev) => (prev.includes(String(initialStudentId)) ? prev : [...prev, String(initialStudentId)]));
+  }, [initialStudentId]);
+
+  const nameByNum = useMemo(() => new Map(suggestions.map((u) => [u.studentNum, u.name])), [suggestions]);
+  const unknownIds = suggestions.length ? studentIds.filter((id) => !nameByNum.has(id)) : [];
+
+  const addIds = (text) => {
+    const ids = splitIds(text);
+    if (ids.length === 0) return;
+    setStudentIds((prev) => [...prev, ...ids.filter((id, i) => !prev.includes(id) && ids.indexOf(id) === i)]);
   };
 
-  const handleStudentIdChange = (index, value) => {
-    setStudentIds((prev) => prev.map((id, i) => (i === index ? value : id)));
+  const commitDraft = () => {
+    addIds(draft);
+    setDraft('');
   };
 
-  const handleAddRow = () => setStudentIds((prev) => [...prev, '']);
+  const removeId = (id) => setStudentIds((prev) => prev.filter((x) => x !== id));
 
-  const handleRemoveRow = (index) => {
-    if (studentIds.length === 1) return;
-    setStudentIds((prev) => prev.filter((_, i) => i !== index));
+  const onKeyDown = (e) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === 'Enter' || e.key === ',' || e.key === ' ') {
+      e.preventDefault();
+      commitDraft();
+    } else if (e.key === 'Backspace' && !draft && studentIds.length) {
+      setStudentIds((prev) => prev.slice(0, -1));
+    }
   };
+
+  const onDraftChange = (value) => {
+    // datalist 에서 고르거나, 구분자가 들어간 값을 붙여넣으면 바로 칩으로 만든다
+    if (/[\s,;]/.test(value) || nameByNum.has(value)) {
+      addIds(value);
+      setDraft('');
+    } else {
+      setDraft(value);
+    }
+  };
+
+  const amount = Number(mileageAmount) || 0;
+  const total = amount * studentIds.length;
 
   const validate = () => {
-    if (!mileageAmount || Number(mileageAmount) <= 0) {
+    if (studentIds.length === 0) {
+      alert('지급 대상 학번을 한 명 이상 입력해 주세요.');
+      return false;
+    }
+    if (!mileageAmount || amount <= 0) {
       alert('올바른 마일리지 금액을 입력해 주세요.');
       return false;
     }
@@ -47,24 +90,29 @@ const BulkMileagePaymentForm = ({ onGrant, initialStudentId }) => {
       alert('사유를 입력해 주세요.');
       return false;
     }
-    for (let i = 0; i < studentIds.length; i++) {
-      if (!studentIds[i].trim()) {
-        alert(`${i + 1}번째 학번을 입력해 주세요.`);
-        return false;
-      }
-    }
     return true;
   };
 
   const handleSubmit = async () => {
+    if (draft.trim()) {
+      alert('입력 중인 학번이 있습니다. Enter 를 눌러 추가하거나 지워 주세요.');
+      return;
+    }
     if (!validate()) return;
-    if (!window.confirm(`총 ${studentIds.length}명에게 마일리지를 지급합니다.\n계속하시겠습니까?`)) return;
+    const ok = await confirmDialog({
+      title: `${studentIds.length}명에게 마일리지를 지급할까요?`,
+      message:
+        `1인당 ${amount.toLocaleString()} NC · 총 ${total.toLocaleString()} NC\n사유: ${reason.trim()}` +
+        (unknownIds.length ? `\n\n회원 목록에서 찾지 못한 학번 ${unknownIds.length}개가 있습니다: ${unknownIds.join(', ')}` : ''),
+      confirmText: '지급하기',
+    });
+    if (!ok) return;
 
     setLoading(true);
     try {
       const dataList = studentIds.map((studentId) => ({ studentId, mileageAmount, reason }));
       await onGrant(dataList);
-      setStudentIds(['']);
+      setStudentIds([]);
       setMileageAmount('');
       setReason('');
     } finally {
@@ -73,98 +121,150 @@ const BulkMileagePaymentForm = ({ onGrant, initialStudentId }) => {
   };
 
   return (
-    <div className="w-[874px] bg-white shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] mt-4 rounded-sm overflow-hidden">
-
-      {/* datalist — 전역 1개로 모든 입력 필드에서 재사용 */}
-      <datalist id={datalistId.current}>
-        {suggestions.map((u) => (
-          <option key={u.studentNum} value={u.studentNum} label={u.name} />
-        ))}
-      </datalist>
-
-      {/* 공통 입력 영역 */}
-      <div className="px-6 pt-6 pb-5 flex items-center gap-4 border-b border-stone-100">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-gray-400 font-medium">지급 마일리지</span>
-          <input
-            type="number"
-            className="w-36 h-9 px-3 text-sm border border-stone-300 rounded-md outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-100 transition"
-            value={mileageAmount}
-            placeholder="금액 입력"
-            min={1}
-            onChange={(e) => setMileageAmount(e.target.value)}
-          />
-        </div>
-
-        <div className="w-px h-10 bg-stone-200 mt-4"></div>
-
-        <div className="flex flex-col gap-1 flex-1">
-          <span className="text-xs text-gray-400 font-medium">지급 사유</span>
-          <input
-            type="text"
-            className="w-full h-9 px-3 text-sm border border-stone-300 rounded-md outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-100 transition"
-            value={reason}
-            placeholder="사유를 입력하세요 (마이페이지에 그대로 노출됩니다)"
-            onChange={(e) => setReason(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* 학번 목록 헤더 */}
-      <div className="px-6 pt-4 pb-2 flex items-center justify-between">
-        <span className="text-xs text-gray-400 font-medium">지급 대상 학번</span>
-        <span className="text-xs text-gray-400">{studentIds.length}명</span>
-      </div>
-
-      {/* 학번 목록 */}
-      <div className="flex flex-col gap-2 px-6 pb-4 max-h-[240px] overflow-y-auto">
-        {studentIds.map((studentId, index) => {
-          const matchedName = getNameByStudentNum(studentId);
-          return (
-            <div key={index} className="flex items-center gap-2">
-              <span className="text-xs text-gray-300 w-5 text-right shrink-0">{index + 1}</span>
+    <div className="adm-split">
+      <div className="adm-split__main adm-card">
+        <div className="adm-card__body adm-form" style={{ gap: 28 }}>
+          {/* 1. 지급 대상 */}
+          <div className="adm-field" style={{ gap: 8 }}>
+            <p className="adm-step">
+              <span className="adm-step__num">1</span>지급 대상
+            </p>
+            <p className="adm-help">학번을 입력하고 Enter. 여러 명은 쉼표·공백·줄바꿈으로 한 번에 붙여넣을 수 있어요.</p>
+            <datalist id={datalistId.current}>
+              {suggestions.map((u) => (
+                <option key={u.studentNum} value={u.studentNum} label={u.name} />
+              ))}
+            </datalist>
+            <div className="adm-chips" onClick={() => inputRef.current?.focus()}>
+              {studentIds.map((id) => {
+                const name = nameByNum.get(id);
+                const unknown = suggestions.length > 0 && !name;
+                return (
+                  <span key={id} className={cx('adm-chip', unknown && 'adm-chip--warn')} title={unknown ? '회원 목록에서 찾지 못한 학번' : undefined}>
+                    {id}
+                    {name && <span className="adm-chip__name">{name}</span>}
+                    <button type="button" className="adm-chip__x" onClick={() => removeId(id)} aria-label={`${id} 빼기`}>
+                      <X size={13} />
+                    </button>
+                  </span>
+                );
+              })}
               <input
-                type="text"
+                ref={inputRef}
                 list={datalistId.current}
-                className="flex-1 h-9 px-3 text-sm text-neutral-800 border border-stone-200 rounded-md outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-100 bg-stone-50 transition"
-                value={studentId}
-                placeholder="학번 입력"
-                onChange={(e) => handleStudentIdChange(index, e.target.value)}
+                value={draft}
+                placeholder={studentIds.length ? '학번 추가' : '학번 입력'}
+                onChange={(e) => onDraftChange(e.target.value)}
+                onKeyDown={onKeyDown}
+                onBlur={commitDraft}
+                onPaste={(e) => {
+                  const text = e.clipboardData.getData('text');
+                  if (splitIds(text).length > 1) {
+                    e.preventDefault();
+                    addIds(text);
+                  }
+                }}
               />
-              {/* 학번 매칭 시 이름 표시 */}
-              {matchedName && (
-                <span className="text-xs text-rose-400 font-medium whitespace-nowrap">
-                  {matchedName}
-                </span>
-              )}
-              <button
-                className="w-7 h-7 flex items-center justify-center rounded-full text-gray-300 hover:text-red-400 hover:bg-red-50 disabled:opacity-20 transition"
-                onClick={() => handleRemoveRow(index)}
-                disabled={studentIds.length === 1}
-              >
-                ✕
-              </button>
             </div>
-          );
-        })}
+            {unknownIds.length > 0 && (
+              <p className="adm-error" style={{ color: '#8a6410' }}>
+                <AlertTriangle size={14} />
+                회원 목록에서 찾지 못한 학번이 {unknownIds.length}개 있습니다. 오타가 아닌지 확인해 주세요.
+              </p>
+            )}
+          </div>
+
+          {/* 2. 금액 */}
+          <div className="adm-field" style={{ gap: 8 }}>
+            <p className="adm-step">
+              <span className="adm-step__num">2</span>1인당 지급 마일리지
+            </p>
+            <div className="adm-row" style={{ flexWrap: 'wrap' }}>
+              <input
+                type="number"
+                className="adm-input"
+                style={{ width: 200 }}
+                value={mileageAmount}
+                placeholder="금액 입력"
+                min={1}
+                onChange={(e) => setMileageAmount(e.target.value)}
+              />
+              <span className="adm-label">NC</span>
+              <span style={{ width: 8 }} />
+              {QUICK_AMOUNTS.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  className="adm-btn adm-btn--secondary adm-btn--sm"
+                  onClick={() => setMileageAmount(String((Number(mileageAmount) || 0) + q))}
+                >
+                  +{q.toLocaleString()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. 사유 */}
+          <div className="adm-field" style={{ gap: 8 }}>
+            <p className="adm-step">
+              <span className="adm-step__num">3</span>지급 사유
+            </p>
+            <textarea
+              className="adm-textarea"
+              value={reason}
+              placeholder="예: 2026 NIMDA CTF 1위 상금"
+              onChange={(e) => setReason(e.target.value)}
+            />
+            <p className="adm-help adm-row" style={{ gap: 6 }}>
+              <Info size={14} />
+              사유는 회원의 마이페이지 마일리지 내역에 그대로 보입니다.
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* 하단 버튼 영역 */}
-      <div className="flex justify-between items-center px-6 py-4 border-t border-stone-100 bg-stone-50">
-        <button
-          className="h-9 px-4 border border-stone-300 rounded-md text-sm text-gray-500 hover:bg-white transition"
-          onClick={handleAddRow}
-        >
-          + 행 추가
-        </button>
-        <button
-          className="h-9 px-6 bg-rose-400 rounded-md text-white text-sm font-medium hover:bg-rose-500 disabled:opacity-50 transition"
-          onClick={handleSubmit}
-          disabled={loading}
-        >
-          {loading ? '지급 중...' : `${studentIds.length}명 일괄 지급`}
-        </button>
-      </div>
+      <aside className="adm-split__side adm-card">
+        <div className="adm-card__body adm-form" style={{ gap: 16 }}>
+          <p className="adm-card__title">지급 요약</p>
+          <div className="adm-sum-row">
+            지급 대상<strong>{studentIds.length}명</strong>
+          </div>
+          <div className="adm-sum-row">
+            1인당<strong>{amount.toLocaleString()} NC</strong>
+          </div>
+          {unknownIds.length > 0 && (
+            <div className="adm-sum-row">
+              확인 필요한 학번<strong style={{ color: '#8a6410' }}>{unknownIds.length}개</strong>
+            </div>
+          )}
+          <div className="adm-sum-row adm-sum-total">
+            총 지급<strong>{total.toLocaleString()} NC</strong>
+          </div>
+
+          <div className="adm-preview">
+            <p className="adm-preview__label">회원 마이페이지에는 이렇게 보여요</p>
+            <div className="adm-preview__row">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p className="adm-preview__title">{reason.trim() || '지급 사유'}</p>
+                <p className="adm-preview__date">{formatDate(new Date())}</p>
+              </div>
+              <span className="adm-preview__amount">+{amount.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="adm-btn adm-btn--primary adm-btn--lg adm-btn--block"
+            onClick={handleSubmit}
+            disabled={loading || studentIds.length === 0}
+          >
+            {loading ? '지급 중...' : studentIds.length ? `${studentIds.length}명에게 지급하기` : '지급 대상을 입력하세요'}
+          </button>
+          <p className="adm-help" style={{ textAlign: 'center' }}>
+            지급 전에 한 번 더 확인 창이 뜹니다.
+          </p>
+        </div>
+      </aside>
     </div>
   );
 };
