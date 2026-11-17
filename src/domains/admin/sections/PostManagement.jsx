@@ -1,191 +1,236 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FileText, Pin, RefreshCw, Search } from 'lucide-react';
+import {
+  Avatar,
+  Badge,
+  Empty,
+  Loading,
+  PageHeader,
+  Pagination,
+  Segmented,
+  confirmDialog,
+  cx,
+  formatDate,
+  usePaged,
+} from '../components/AdminUI';
+
+const PAGE_SIZE = 15;
+
+const flatten = (tree, level = 0) =>
+  tree.flatMap((c) => [{ ...c, level }, ...flatten(c.children || [], level + 1)]);
 
 const PostManagement = ({
   categoriesLoading,
   activeCategoryTree,
-  getTotalCategoryCount,
+  loadCategories,
   selectedPostCategoryId,
   setSelectedPostCategoryId,
   loadPosts,
-  loadCategories,
   postsLoading,
   posts,
   handleDeletePost,
-  findCategoryById,
+  handleTogglePin,
+  handleEditPost,
 }) => {
-  // 포스트 관리용 카테고리 렌더링 함수
-  const renderPostCategoryItem = (category, level = 0) => {
-    const isParent = category.children && category.children.length > 0;
-    const isSelected = selectedPostCategoryId === category.id;
-    const childCount = category.children ? category.children.length : 0;
+  const [tab, setTab] = useState('all');
+  const [keyword, setKeyword] = useState('');
+  const [pinningId, setPinningId] = useState(null);
 
-    return (
-      <div key={category.id}>
-        <div
-          className={`admin__post-category-item ${isSelected ? 'admin__post-category-item--selected' : ''} ${level > 0 ? 'admin__post-category-item--child' : ''}`}
-          style={{ paddingLeft: level > 0 ? `${24 + level * 16}px` : '16px' }}
-          onClick={() => {
-            setSelectedPostCategoryId(category.id);
-            loadPosts(category.slug);
-          }}
-        >
-          <span className="admin__post-category-name">
-            {category.name}
-            {isParent && (
-              <span className="admin__post-category-count">
-                {' '}
-                ({childCount})
-              </span>
-            )}
-          </span>
-        </div>
-        {isParent &&
-          category.children?.map((child) =>
-            renderPostCategoryItem(child, level + 1)
-          )}
-      </div>
-    );
+  const flat = useMemo(() => flatten(activeCategoryTree), [activeCategoryTree]);
+  const selectedCategory = flat.find((c) => c.id === selectedPostCategoryId) || null;
+
+  const selectCategory = (id) => {
+    const category = flat.find((c) => c.id === id);
+    if (!category) return;
+    setSelectedPostCategoryId(category.id);
+    loadPosts(category.slug);
+  };
+
+  // 처음 들어오면 첫 번째 카테고리를 자동으로 연다
+  useEffect(() => {
+    if (!selectedPostCategoryId && flat.length > 0) selectCategory(flat[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flat.length]);
+
+  const pinnedCount = posts.filter((p) => p.pinned).length;
+
+  const visible = useMemo(() => {
+    const q = keyword.trim().toLowerCase();
+    return posts
+      .filter((p) => (tab === 'pinned' ? p.pinned : true))
+      .filter(
+        (p) =>
+          !q ||
+          (p.title || '').toLowerCase().includes(q) ||
+          (p.author?.nickname || '').toLowerCase().includes(q)
+      )
+      .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+  }, [posts, tab, keyword]);
+
+  const paged = usePaged(visible, PAGE_SIZE, `${selectedPostCategoryId}|${tab}|${keyword}`);
+
+  const onTogglePin = async (post) => {
+    setPinningId(post.id);
+    try {
+      await handleTogglePin(post.id);
+    } finally {
+      setPinningId(null);
+    }
+  };
+
+  const onDelete = async (post) => {
+    const ok = await confirmDialog({
+      title: '게시글을 삭제할까요?',
+      message: `"${post.title}"\n삭제한 글은 되돌릴 수 없습니다.`,
+      confirmText: '삭제',
+      danger: true,
+    });
+    if (ok) handleDeletePost(post.id);
   };
 
   return (
-    <div>
-      <h2 className="admin__section-title">포스트 수정/삭제</h2>
+    <>
+      <PageHeader
+        title="게시글 관리"
+        description="게시글을 고정하거나 수정·삭제합니다. 고정한 글은 게시판 맨 위에 보입니다."
+        actions={
+          selectedCategory && (
+            <button
+              type="button"
+              className="adm-btn adm-btn--secondary"
+              onClick={() => loadPosts(selectedCategory.slug)}
+              disabled={postsLoading}
+            >
+              <RefreshCw size={15} />
+              {postsLoading ? '불러오는 중' : '새로고침'}
+            </button>
+          )
+        }
+      />
 
-      {/* 2패널 레이아웃 */}
-      <div className="admin__catorder-wrap">
-        {/* 왼쪽: 카테고리 트리 */}
-        <div className="admin__catorder-left">
-          <div className="admin__catorder-left-header">
-            <span>카테고리 ({getTotalCategoryCount(activeCategoryTree)})</span>
-          </div>
-          <div className="admin__post-category-list">
-            {categoriesLoading ? (
-              <div
-                className="admin__empty"
-                style={{ border: 'none', padding: '24px' }}
-              >
-                로딩 중...
-              </div>
-            ) : activeCategoryTree.length > 0 ? (
-              activeCategoryTree.map((category) =>
-                renderPostCategoryItem(category, 0)
-              )
-            ) : (
-              <div
-                className="admin__empty"
-                style={{ border: 'none', padding: '24px' }}
-              >
-                <p style={{ marginBottom: 16 }}>카테고리가 없습니다.</p>
-                <button onClick={loadCategories} className="admin__btn">
-                  불러오기
-                </button>
-              </div>
-            )}
-          </div>
+      <div className="adm-card">
+        <div className="adm-toolbar">
+          <select
+            className="adm-select"
+            style={{ width: 200 }}
+            value={selectedPostCategoryId || ''}
+            onChange={(e) => selectCategory(Number(e.target.value))}
+            disabled={categoriesLoading || flat.length === 0}
+            aria-label="카테고리"
+          >
+            {flat.length === 0 && <option value="">카테고리 없음</option>}
+            {flat.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.level > 0 ? `${'  '.repeat(c.level)}└ ` : ''}
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <Segmented
+            value={tab}
+            onChange={setTab}
+            items={[
+              { value: 'all', label: '전체', count: posts.length },
+              { value: 'pinned', label: '고정됨', count: pinnedCount },
+            ]}
+          />
+          <label className="adm-search">
+            <Search size={16} />
+            <input
+              className="adm-input"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="제목, 작성자로 검색"
+            />
+          </label>
         </div>
 
-        {/* 오른쪽: 게시글 목록 */}
-        <div className="admin__catorder-right">
-          <div className="admin__header-row" style={{ marginBottom: '16px' }}>
-            <h3 style={{ margin: 0 }}>
-              {selectedPostCategoryId
-                ? findCategoryById(activeCategoryTree, selectedPostCategoryId)
-                    ?.name || '게시글 목록'
-                : '카테고리를 선택하세요'}
-            </h3>
-            {selectedPostCategoryId && (
-              <button
-                onClick={() => {
-                  const selectedCategory = findCategoryById(
-                    activeCategoryTree,
-                    selectedPostCategoryId
-                  );
-                  if (selectedCategory) {
-                    loadPosts(selectedCategory.slug);
-                  }
-                }}
-                disabled={postsLoading}
-                className="admin__btn"
-              >
-                {postsLoading ? '로딩 중' : '새로고침'}
+        {categoriesLoading && flat.length === 0 ? (
+          <Loading />
+        ) : flat.length === 0 ? (
+          <Empty
+            icon={<FileText size={22} />}
+            title="카테고리가 없습니다"
+            action={
+              <button type="button" className="adm-btn adm-btn--secondary" onClick={loadCategories}>
+                불러오기
               </button>
-            )}
-          </div>
-
-          {selectedPostCategoryId ? (
-            postsLoading ? (
-              <div className="admin__empty" style={{ border: 'none' }}>
-                로딩 중...
-              </div>
-            ) : posts.length > 0 ? (
-              <div className="admin__table-wrap">
-                <table className="admin__table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>제목</th>
-                      <th>작성자</th>
-                      <th>작성일</th>
-                      <th>작업</th>
+            }
+          />
+        ) : postsLoading ? (
+          <Loading />
+        ) : visible.length === 0 ? (
+          <Empty icon={<FileText size={22} />} title={posts.length === 0 ? '게시글이 없습니다' : '조건에 맞는 글이 없습니다'}>
+            {posts.length === 0 ? `${selectedCategory?.name || '이 카테고리'}에 작성된 글이 없어요.` : '탭이나 검색어를 바꿔 보세요.'}
+          </Empty>
+        ) : (
+          <>
+            <div className="adm-table-scroll">
+              <table className="adm-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 64 }}>고정</th>
+                    <th>제목</th>
+                    <th>작성자</th>
+                    <th>작성일</th>
+                    <th className="is-right">작업</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paged.rows.map((post) => (
+                    <tr key={post.id} className={cx(post.pinned && 'is-pinned')}>
+                      <td>
+                        <button
+                          type="button"
+                          className="adm-icon-btn"
+                          style={post.pinned ? { background: 'var(--adm-pink-bg)', color: 'var(--adm-pink)' } : { color: '#bcbcbc' }}
+                          disabled={pinningId === post.id}
+                          onClick={() => onTogglePin(post)}
+                          title={post.pinned ? '고정 해제' : '고정'}
+                          aria-label={post.pinned ? '고정 해제' : '고정'}
+                          aria-pressed={Boolean(post.pinned)}
+                        >
+                          <Pin size={16} fill={post.pinned ? 'currentColor' : 'none'} />
+                        </button>
+                      </td>
+                      <td>
+                        <div className="adm-row">
+                          {post.pinned && <Badge tone="pink">고정</Badge>}
+                          <span style={{ fontWeight: post.pinned ? 500 : 400, wordBreak: 'break-all' }}>{post.title}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="adm-row" style={{ whiteSpace: 'nowrap' }}>
+                          <Avatar src={post.author?.profileImage} name={post.author?.nickname} size="sm" />
+                          <span className="is-num">{post.author?.nickname || '-'}</span>
+                        </div>
+                      </td>
+                      <td className="is-date">{formatDate(post.createdAt)}</td>
+                      <td>
+                        <div className="adm-cell-actions">
+                          <button type="button" className="adm-btn adm-btn--ghost adm-btn--sm" onClick={() => handleEditPost(post.category?.slug ? post : { ...post, category: { slug: selectedCategory?.slug } })}>
+                            수정
+                          </button>
+                          <button type="button" className="adm-btn adm-btn--danger adm-btn--sm" onClick={() => onDelete(post)}>
+                            삭제
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {posts.map((post) => (
-                      <tr key={post.id}>
-                        <td>{post.id}</td>
-                        <td style={{ textAlign: 'left' }}>{post.title}</td>
-                        <td>
-                          <div className="admin__author-cell">
-                            <img
-                              src={
-                                post.author?.profileImage ||
-                                '/default_user_profile.svg'
-                              }
-                              alt=""
-                              className="admin__author-avatar"
-                            />
-                            <span>{post.author?.nickname || '-'}</span>
-                          </div>
-                        </td>
-                        <td>
-                          {post.createdAt
-                            ? new Date(post.createdAt).toLocaleDateString()
-                            : '-'}
-                        </td>
-                        <td>
-                          <div className="admin__actions">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeletePost(post.id);
-                              }}
-                              className="admin__btn--reject"
-                            >
-                              삭제
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="admin__empty">
-                <p style={{ marginBottom: 16 }}>게시글이 없습니다.</p>
-              </div>
-            )
-          ) : (
-            <div className="admin__empty">
-              <p>
-                왼쪽에서 카테고리를 선택하면 해당 카테고리의 게시글 목록이
-                표시됩니다.
-              </p>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
+            <div className="adm-tfoot">
+              <span>
+                {visible.length}개 중 {paged.from}–{paged.to}
+              </span>
+              <Pagination page={paged.page} pageCount={paged.pageCount} onChange={paged.setPage} />
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </>
   );
 };
 
