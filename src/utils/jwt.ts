@@ -30,3 +30,8 @@ export const hasRole = (role: string): boolean => {
 // 관리자 권한 체크
 export const isAdmin = (): boolean => hasRole('ROLE_ADMIN');
 export const isDev = (): boolean => hasRole('ROLE_DEV');
+
+// CTF 게임(game.nimda.kr)에 들어갈 수 있는 역할. 게임 서버의 MMO_ALLOWED_ROLES 와 같게 둔다.
+export const GAME_ROLES = ['ROLE_CTF_USER', 'ROLE_CTF_MASTER', 'ROLE_ADMIN', 'ROLE_DEV'];
+export const canEnterGame = (roles?: string[]): boolean =>
+  roles ? GAME_ROLES.some((role) => roles.includes(role)) : GAME_ROLES.some(hasRole);
