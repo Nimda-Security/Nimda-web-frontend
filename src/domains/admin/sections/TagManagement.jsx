@@ -1,24 +1,22 @@
-import React, { useState, useEffect } from 'react';
-import {
-  getAllTagsAPI,
-  getTagsByCategoryAPI,
-  addTagAPI,
-  deleteTagAPI,
-  updateTagAPI,
-} from '@/api/tag';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, Plus, Tag } from 'lucide-react';
+import { getTagsByCategoryAPI, addTagAPI, deleteTagAPI, updateTagAPI } from '@/api/tag';
+import { getTagStatsAPI, deactivateBoardsByTagAPI, activateBoardsByTagAPI } from '@/api/admin/admin';
+import { Badge, Empty, Loading, PageHeader, confirmDialog, cx } from '../components/AdminUI';
+
+const flatten = (tree, level = 0) =>
+  tree.flatMap((c) => [{ ...c, level }, ...flatten(c.children || [], level + 1)]);
 
 const TagManagement = ({
-  categories,
+  categoryTree,
   categoriesLoading,
   loadCategories,
-  categoryTree,
-  localCategoryTree,
-  getTotalCategoryCount,
-  renderCategoryOrderItem,
   selectedCategoryId,
+  setSelectedCategoryId,
 }) => {
   const [tags, setTags] = useState([]);
   const [tagsLoading, setTagsLoading] = useState(false);
+  const [stats, setStats] = useState([]);
   const [newTagName, setNewTagName] = useState('');
   const [newTagSortValue, setNewTagSortValue] = useState('');
   const [addingTag, setAddingTag] = useState(false);
@@ -27,25 +25,12 @@ const TagManagement = ({
   const [editTagSortValue, setEditTagSortValue] = useState('');
   const [editTagCategoryId, setEditTagCategoryId] = useState(null);
   const [savingTag, setSavingTag] = useState(false);
-  const [deletingTagId, setDeletingTagId] = useState(null);
+  const [busyTagId, setBusyTagId] = useState(null);
 
-  // 선택된 카테고리 정보 찾기
-  const findCategoryById = (tree, id) => {
-    for (const cat of tree) {
-      if (cat.id === id) return cat;
-      if (cat.children && cat.children.length > 0) {
-        const found = findCategoryById(cat.children, id);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
+  const flat = useMemo(() => flatten(categoryTree), [categoryTree]);
+  const selectedCategory = flat.find((c) => c.id === selectedCategoryId) || null;
+  const statsById = useMemo(() => new Map(stats.map((s) => [s.tagId, s])), [stats]);
 
-  const selectedCategoryData = selectedCategoryId
-    ? findCategoryById(categoryTree, selectedCategoryId)
-    : null;
-
-  // 태그 로드
   const loadTags = async () => {
     if (!selectedCategoryId) {
       setTags([]);
@@ -53,8 +38,7 @@ const TagManagement = ({
     }
     setTagsLoading(true);
     try {
-      const result = await getTagsByCategoryAPI(selectedCategoryId);
-      setTags(result);
+      setTags(await getTagsByCategoryAPI(selectedCategoryId));
     } catch {
       setTags([]);
     } finally {
@@ -62,24 +46,33 @@ const TagManagement = ({
     }
   };
 
+  const loadStats = async () => {
+    if (!selectedCategoryId) {
+      setStats([]);
+      return;
+    }
+    try {
+      const result = await getTagStatsAPI(selectedCategoryId);
+      setStats(result.success ? result.tagStats || [] : []);
+    } catch {
+      setStats([]);
+    }
+  };
+
   useEffect(() => {
     loadTags();
+    loadStats();
     setEditingTagId(null);
     setNewTagName('');
     setNewTagSortValue('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategoryId]);
 
-  // 태그 추가
   const handleAddTag = async () => {
     if (!newTagName.trim()) {
       alert('태그 이름을 입력해주세요.');
       return;
     }
-    if (!selectedCategoryId) {
-      alert('카테고리를 먼저 선택해주세요.');
-      return;
-    }
-
     setAddingTag(true);
     try {
       const sortVal = newTagSortValue ? parseInt(newTagSortValue, 10) : tags.length;
@@ -91,7 +84,7 @@ const TagManagement = ({
       if (result.success) {
         setNewTagName('');
         setNewTagSortValue('');
-        await loadTags();
+        await Promise.all([loadTags(), loadStats()]);
       } else {
         alert(result.message || '태그 추가에 실패했습니다.');
       }
@@ -102,25 +95,29 @@ const TagManagement = ({
     }
   };
 
-  // 태그 삭제
-  const handleDeleteTag = async (tagId) => {
-    if (!confirm('이 태그를 삭제하시겠습니까?')) return;
-    setDeletingTagId(tagId);
+  const handleDeleteTag = async (tag) => {
+    const ok = await confirmDialog({
+      title: `#${tag.tagName} 태그를 삭제할까요?`,
+      message: '삭제한 태그는 되돌릴 수 없습니다.',
+      confirmText: '삭제',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusyTagId(tag.id);
     try {
-      const result = await deleteTagAPI(tagId);
+      const result = await deleteTagAPI(tag.id);
       if (result.success) {
-        await loadTags();
+        await Promise.all([loadTags(), loadStats()]);
       } else {
         alert(result.message || '태그 삭제에 실패했습니다.');
       }
     } catch {
       alert('태그 삭제 중 오류가 발생했습니다.');
     } finally {
-      setDeletingTagId(null);
+      setBusyTagId(null);
     }
   };
 
-  // 태그 수정 시작
   const handleStartEdit = (tag) => {
     setEditingTagId(tag.id);
     setEditTagName(tag.tagName);
@@ -128,15 +125,6 @@ const TagManagement = ({
     setEditTagCategoryId(tag.categoryId);
   };
 
-  // 태그 수정 취소
-  const handleCancelEdit = () => {
-    setEditingTagId(null);
-    setEditTagName('');
-    setEditTagSortValue('');
-    setEditTagCategoryId(null);
-  };
-
-  // 태그 수정 저장
   const handleSaveEdit = async () => {
     if (!editTagName.trim()) {
       alert('태그 이름을 입력해주세요.');
@@ -152,7 +140,7 @@ const TagManagement = ({
       });
       if (result.success) {
         setEditingTagId(null);
-        await loadTags();
+        await Promise.all([loadTags(), loadStats()]);
       } else {
         alert(result.message || '태그 수정에 실패했습니다.');
       }
@@ -163,20 +151,15 @@ const TagManagement = ({
     }
   };
 
-  // 순서 위/아래 이동
-  const handleMoveTag = async (tagId, direction) => {
-    const index = tags.findIndex((t) => t.id === tagId);
-    if (index === -1) return;
+  const handleMoveTag = async (index, direction) => {
     const swapIndex = direction === 'up' ? index - 1 : index + 1;
     if (swapIndex < 0 || swapIndex >= tags.length) return;
-
-    const currentTag = tags[index];
-    const swapTag = tags[swapIndex];
-
+    const current = tags[index];
+    const swap = tags[swapIndex];
     try {
       await Promise.all([
-        updateTagAPI(currentTag.id, { sortValue: swapTag.sortValue }),
-        updateTagAPI(swapTag.id, { sortValue: currentTag.sortValue }),
+        updateTagAPI(current.id, { sortValue: swap.sortValue }),
+        updateTagAPI(swap.id, { sortValue: current.sortValue }),
       ]);
       await loadTags();
     } catch {
@@ -184,268 +167,225 @@ const TagManagement = ({
     }
   };
 
-  // 모든 카테고리를 평탄화 (카테고리 선택 드롭다운용)
-  const flattenCategories = (tree, level = 0) => {
-    const result = [];
-    tree.forEach((category) => {
-      result.push({ ...category, level });
-      if (category.children && category.children.length > 0) {
-        result.push(...flattenCategories(category.children, level + 1));
-      }
+  const handleBoards = async (tag, mode) => {
+    const hide = mode === 'hide';
+    const ok = await confirmDialog({
+      title: hide ? `#${tag.tagName} 글을 모두 숨길까요?` : `#${tag.tagName} 글을 다시 보이게 할까요?`,
+      message: hide
+        ? `이 카테고리에서 #${tag.tagName} 태그가 달린 활성 게시글이 모두 비활성화됩니다.`
+        : `이 카테고리에서 #${tag.tagName} 태그가 달린 비활성 게시글이 모두 다시 활성화됩니다.`,
+      confirmText: hide ? '숨기기' : '보이기',
+      danger: hide,
     });
-    return result;
+    if (!ok) return;
+    setBusyTagId(tag.id);
+    try {
+      const result = hide
+        ? await deactivateBoardsByTagAPI(selectedCategoryId, tag.id)
+        : await activateBoardsByTagAPI(selectedCategoryId, tag.id);
+      if (result.success) {
+        alert(result.message || (hide ? '비활성화되었습니다.' : '활성화되었습니다.'));
+        await loadStats();
+      } else {
+        alert(result.message || (hide ? '비활성화에 실패했습니다.' : '활성화에 실패했습니다.'));
+      }
+    } catch {
+      alert(hide ? '비활성화 중 오류가 발생했습니다.' : '활성화 중 오류가 발생했습니다.');
+    } finally {
+      setBusyTagId(null);
+    }
   };
-  const allCategoriesFlat = flattenCategories(categoryTree);
+
+  const onEnter = (fn) => (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      fn();
+    }
+  };
 
   return (
-    <div>
-      <h2 className="admin__section-title">태그 관리</h2>
+    <>
+      <PageHeader
+        title="태그"
+        description="카테고리별 태그를 추가·정렬하고, 태그 단위로 게시글을 숨기거나 다시 보이게 합니다."
+      />
 
-      <div className="admin__catorder-wrap">
-        {/* 왼쪽: 카테고리 트리 */}
-        <div className="admin__catorder-left">
-          <div className="admin__catorder-left-header">
-            <span>카테고리 전체보기 ({getTotalCategoryCount(localCategoryTree)})</span>
+      <div className="adm-split">
+        <nav className="adm-split__nav adm-card">
+          <div className="adm-toolbar" style={{ borderBottom: '1px solid #ececec' }}>
+            <span className="adm-label">카테고리</span>
           </div>
-          <div className="admin__catorder-tree">
-            {categoriesLoading ? (
-              <div className="admin__empty" style={{ border: 'none' }}>로딩 중...</div>
-            ) : localCategoryTree.length > 0 ? (
-              localCategoryTree.map((category) => renderCategoryOrderItem(category, 0))
-            ) : (
-              <div className="admin__empty" style={{ border: 'none' }}>
-                <p style={{ marginBottom: 16 }}>카테고리가 없습니다.</p>
-                <button onClick={loadCategories} className="admin__btn">불러오기</button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 오른쪽: 태그 관리 */}
-        <div className="admin__catorder-right">
-          {selectedCategoryData ? (
-            <div className="admin__catorder-form">
-              <div className="admin__catorder-form-row">
-                <label className="admin__catorder-form-label" style={{ fontWeight: 600, fontSize: '15px' }}>
-                  {selectedCategoryData.name} - 태그 목록
-                </label>
-              </div>
-
-              {/* 태그 추가 폼 */}
-              <div style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#f8f9fa', borderRadius: '8px', border: '1px solid #e9ecef' }}>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#555' }}>
-                      태그 이름
-                    </label>
-                    <input
-                      type="text"
-                      className="admin__catorder-input"
-                      placeholder="새 태그 이름"
-                      value={newTagName}
-                      onChange={(e) => setNewTagName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(); } }}
-                    />
-                  </div>
-                  <div style={{ width: '80px' }}>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#555' }}>
-                      순서
-                    </label>
-                    <input
-                      type="number"
-                      className="admin__catorder-input"
-                      placeholder="0"
-                      value={newTagSortValue}
-                      onChange={(e) => setNewTagSortValue(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(); } }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="admin__btn--approve"
-                    onClick={handleAddTag}
-                    disabled={addingTag || !newTagName.trim()}
-                    style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}
-                  >
-                    {addingTag ? '추가 중...' : '+ 추가'}
-                  </button>
-                </div>
-              </div>
-
-              {/* 태그 목록 */}
-              {tagsLoading ? (
-                <div className="admin__empty" style={{ border: 'none' }}>태그 로딩 중...</div>
-              ) : tags.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {tags.map((tag, index) => (
-                    <div
-                      key={tag.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '12px 16px',
-                        backgroundColor: editingTagId === tag.id ? '#fff' : '#f8f9fa',
-                        borderRadius: '8px',
-                        border: editingTagId === tag.id ? '2px solid #4A7FCC' : '1px solid #e9ecef',
-                        gap: '12px',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      {editingTagId === tag.id ? (
-                        /* 수정 모드 */
-                        <>
-                          <div style={{ flex: 1, display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <input
-                              type="text"
-                              className="admin__catorder-input"
-                              value={editTagName}
-                              onChange={(e) => setEditTagName(e.target.value)}
-                              style={{ flex: 1 }}
-                              placeholder="태그 이름"
-                            />
-                            <input
-                              type="number"
-                              className="admin__catorder-input"
-                              value={editTagSortValue}
-                              onChange={(e) => setEditTagSortValue(e.target.value)}
-                              style={{ width: '70px' }}
-                              placeholder="순서"
-                            />
-                            <select
-                              className="admin__catorder-input"
-                              value={editTagCategoryId || ''}
-                              onChange={(e) => setEditTagCategoryId(e.target.value ? Number(e.target.value) : null)}
-                              style={{ width: '140px' }}
-                            >
-                              {allCategoriesFlat.map((cat) => (
-                                <option key={cat.id} value={cat.id}>
-                                  {'  '.repeat(cat.level)}{cat.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                            <button
-                              className="admin__btn--approve"
-                              onClick={handleSaveEdit}
-                              disabled={savingTag}
-                              style={{ fontSize: '12px', padding: '6px 12px' }}
-                            >
-                              {savingTag ? '저장 중...' : '저장'}
-                            </button>
-                            <button
-                              className="admin__btn"
-                              onClick={handleCancelEdit}
-                              style={{ fontSize: '12px', padding: '6px 12px' }}
-                            >
-                              취소
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        /* 표시 모드 */
-                        <>
-                          {/* 순서 이동 버튼 */}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
-                            <button
-                              onClick={() => handleMoveTag(tag.id, 'up')}
-                              disabled={index === 0}
-                              style={{
-                                background: 'none', border: 'none', cursor: index === 0 ? 'default' : 'pointer',
-                                fontSize: '11px', padding: '0 4px', color: index === 0 ? '#ccc' : '#666',
-                                lineHeight: 1,
-                              }}
-                              title="위로 이동"
-                            >
-                              ▲
-                            </button>
-                            <button
-                              onClick={() => handleMoveTag(tag.id, 'down')}
-                              disabled={index === tags.length - 1}
-                              style={{
-                                background: 'none', border: 'none', cursor: index === tags.length - 1 ? 'default' : 'pointer',
-                                fontSize: '11px', padding: '0 4px', color: index === tags.length - 1 ? '#ccc' : '#666',
-                                lineHeight: 1,
-                              }}
-                              title="아래로 이동"
-                            >
-                              ▼
-                            </button>
-                          </div>
-
-                          {/* 순서값 */}
-                          <span style={{
-                            display: 'inline-block',
-                            width: '32px',
-                            textAlign: 'center',
-                            fontSize: '12px',
-                            color: '#999',
-                            fontFamily: 'monospace',
-                            flexShrink: 0,
-                          }}>
-                            {tag.sortValue}
-                          </span>
-
-                          {/* 태그 이름 */}
-                          <span style={{
-                            display: 'inline-block',
-                            padding: '4px 12px',
-                            backgroundColor: '#e9ecef',
-                            borderRadius: '4px',
-                            fontSize: '14px',
-                            fontWeight: 500,
-                          }}>
-                            #{tag.tagName}
-                          </span>
-
-                          {/* 카테고리명 */}
-                          <span style={{ fontSize: '13px', color: '#888', flex: 1 }}>
-                            {tag.categoryName}
-                          </span>
-
-                          {/* 수정/삭제 버튼 */}
-                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                            <button
-                              className="admin__btn"
-                              onClick={() => handleStartEdit(tag)}
-                              style={{ fontSize: '12px', padding: '6px 12px' }}
-                            >
-                              수정
-                            </button>
-                            <button
-                              className="admin__btn"
-                              onClick={() => handleDeleteTag(tag.id)}
-                              disabled={deletingTagId === tag.id}
-                              style={{
-                                fontSize: '12px', padding: '6px 12px',
-                                backgroundColor: '#c53030', color: '#fff', border: 'none',
-                              }}
-                            >
-                              {deletingTagId === tag.id ? '삭제 중...' : '삭제'}
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="admin__empty" style={{ border: 'none' }}>
-                  <p>이 카테고리에 등록된 태그가 없습니다.</p>
-                  <p style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
-                    위에서 태그를 추가해주세요.
-                  </p>
-                </div>
-              )}
-            </div>
+          {categoriesLoading && flat.length === 0 ? (
+            <Loading />
+          ) : flat.length === 0 ? (
+            <Empty
+              title="카테고리가 없습니다"
+              action={
+                <button type="button" className="adm-btn adm-btn--secondary" onClick={loadCategories}>
+                  불러오기
+                </button>
+              }
+            />
           ) : (
-            <div className="admin__catorder-placeholder">
-              왼쪽에서 카테고리를 선택하면<br />해당 카테고리의 태그를 관리할 수 있습니다.
-            </div>
+            flat.map((c) => (
+              <div
+                key={c.id}
+                className={cx(
+                  'adm-tree-row',
+                  c.level === 0 && 'adm-tree-row--root',
+                  selectedCategoryId === c.id && 'adm-tree-row--selected',
+                  c.isActive === false && 'adm-tree-row--inactive'
+                )}
+                style={{ '--adm-level': c.level }}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedCategoryId(c.id)}
+                onKeyDown={onEnter(() => setSelectedCategoryId(c.id))}
+              >
+                <span className="adm-tree-row__name">{c.name}</span>
+              </div>
+            ))
+          )}
+        </nav>
+
+        <div className="adm-split__main adm-card">
+          {!selectedCategory ? (
+            <Empty icon={<Tag size={22} />} title="카테고리를 선택하세요">
+              왼쪽에서 카테고리를 누르면 태그를 관리할 수 있습니다.
+            </Empty>
+          ) : (
+            <>
+              <div className="adm-panel-head">
+                <div>
+                  <p className="adm-panel-head__eyebrow">태그 목록</p>
+                  <p className="adm-panel-head__title">{selectedCategory.name}</p>
+                </div>
+              </div>
+
+              <div className="adm-toolbar" style={{ borderBottom: '1px solid #ececec', background: 'var(--adm-surface-2)' }}>
+                <input
+                  className="adm-input"
+                  placeholder="새 태그 이름"
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  onKeyDown={onEnter(handleAddTag)}
+                />
+                <input
+                  type="number"
+                  className="adm-input"
+                  style={{ width: 90 }}
+                  placeholder="순서"
+                  value={newTagSortValue}
+                  onChange={(e) => setNewTagSortValue(e.target.value)}
+                  onKeyDown={onEnter(handleAddTag)}
+                  aria-label="순서"
+                />
+                <button
+                  type="button"
+                  className="adm-btn adm-btn--primary"
+                  onClick={handleAddTag}
+                  disabled={addingTag || !newTagName.trim()}
+                >
+                  <Plus size={15} />
+                  {addingTag ? '추가 중' : '추가'}
+                </button>
+              </div>
+
+              {tagsLoading ? (
+                <Loading />
+              ) : tags.length === 0 ? (
+                <Empty icon={<Tag size={22} />} title="등록된 태그가 없습니다">
+                  위 입력칸에서 태그를 추가하세요.
+                </Empty>
+              ) : (
+                tags.map((tag, index) => {
+                  const stat = statsById.get(tag.id);
+                  const busy = busyTagId === tag.id;
+                  if (editingTagId === tag.id) {
+                    return (
+                      <div key={tag.id} className="adm-list-row adm-list-row--editing">
+                        <input className="adm-input" value={editTagName} onChange={(e) => setEditTagName(e.target.value)} placeholder="태그 이름" />
+                        <input
+                          type="number"
+                          className="adm-input"
+                          style={{ width: 80 }}
+                          value={editTagSortValue}
+                          onChange={(e) => setEditTagSortValue(e.target.value)}
+                          placeholder="순서"
+                          aria-label="순서"
+                        />
+                        <select
+                          className="adm-select"
+                          style={{ width: 160 }}
+                          value={editTagCategoryId || ''}
+                          onChange={(e) => setEditTagCategoryId(e.target.value ? Number(e.target.value) : null)}
+                          aria-label="카테고리"
+                        >
+                          {flat.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {'  '.repeat(c.level)}
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button type="button" className="adm-btn adm-btn--primary adm-btn--sm" onClick={handleSaveEdit} disabled={savingTag}>
+                          {savingTag ? '저장 중' : '저장'}
+                        </button>
+                        <button type="button" className="adm-btn adm-btn--ghost adm-btn--sm" onClick={() => setEditingTagId(null)}>
+                          취소
+                        </button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={tag.id} className="adm-list-row">
+                      <div className="adm-move">
+                        <button type="button" className="adm-icon-btn" disabled={index === 0} onClick={() => handleMoveTag(index, 'up')} aria-label="위로">
+                          <ArrowUp size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          className="adm-icon-btn"
+                          disabled={index === tags.length - 1}
+                          onClick={() => handleMoveTag(index, 'down')}
+                          aria-label="아래로"
+                        >
+                          <ArrowDown size={13} />
+                        </button>
+                      </div>
+                      <span className="adm-help" style={{ width: 28, textAlign: 'center' }}>
+                        {tag.sortValue}
+                      </span>
+                      <span style={{ fontWeight: 500 }}>#{tag.tagName}</span>
+                      <span className="adm-spacer adm-badges">
+                        {stat && <Badge>글 {stat.activeCount}</Badge>}
+                        {stat?.hiddenCount > 0 && <Badge tone="red">숨김 {stat.hiddenCount}</Badge>}
+                      </span>
+                      {stat?.activeCount > 0 && (
+                        <button type="button" className="adm-btn adm-btn--ghost adm-btn--sm" disabled={busy} onClick={() => handleBoards(tag, 'hide')}>
+                          글 숨기기
+                        </button>
+                      )}
+                      {stat?.hiddenCount > 0 && (
+                        <button type="button" className="adm-btn adm-btn--ghost adm-btn--sm" disabled={busy} onClick={() => handleBoards(tag, 'show')}>
+                          다시 보이기
+                        </button>
+                      )}
+                      <button type="button" className="adm-btn adm-btn--secondary adm-btn--sm" onClick={() => handleStartEdit(tag)}>
+                        수정
+                      </button>
+                      <button type="button" className="adm-btn adm-btn--danger adm-btn--sm" disabled={busy} onClick={() => handleDeleteTag(tag)}>
+                        삭제
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </>
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
